@@ -240,6 +240,7 @@ section.main[data-step].on{display:grid}
 .prompts li b{font-weight:600}
 .ghostbtn{font-size:13px;padding:6px 10px;white-space:nowrap}
 @media (max-width:560px){.prompts li{grid-template-columns:26px minmax(0,1fr)}.prompts li .ghostbtn{grid-column:2;justify-self:start}}
+.flagnote{font-size:14px;font-weight:600;color:var(--warn);background:var(--warn-soft);padding:6px 10px;border-radius:8px;margin:0}
 @media (prefers-reduced-motion: reduce){*{transition:none!important}}
 </style>
 
@@ -1046,8 +1047,8 @@ function PROMPTS(){
     { k:'imp', q:'8. Suggest an improvement.', help:' Give one specific change and explain how it would make the results more accurate, precise or valid.', starter:'To improve the investigation, ___. This would ___.' },
   ];
 }
-function promptCheck(t){
-  const q = quickCheck({ cc:t });
+function promptCheck(t0){
+  const t = cleanStarters(t0).text; const q = quickCheck({ cc:t });
   return { trend:q.trend, data:q.data, hyp:q.hyp, bio:q.bio,
     ctrl: /(control|lamp (was )?(off|switched off)|no light|without light|baseline|in the dark)/i.test(t),
     prec: /(precis|close together|close to each other|spread|consistent|outlier|repeatab|similar|varied|variation|range)/i.test(t),
@@ -1297,8 +1298,14 @@ const CRIT = [
   { k:'eval', label:'Limitation or improvement' },
   { k:'concl', label:'Conclusion answers the aim' },
 ];
+// Sentences that still contain an unfinished sentence starter earn no marks.
+function cleanStarters(t){
+  const parts = String(t||'').split(/(?<=[.!?])\s+/); let removed = 0;
+  const kept = parts.filter(p => { const bad = /_{2,}/.test(p) || /support\s*\/\s*do not support/i.test(p) || /\bare\s*\/\s*were\b/i.test(p); if(bad && p.trim()) removed++; return !bad; });
+  return { text: kept.join(' '), removed };
+}
 function quickCheck(s){
-  const t = (s.cc||'');
+  const t = cleanStarters(s.cc).text, co = cleanStarters(s.co).text;
   const nums = (t.match(/\d+(\.\d+)?/g) || []).length;
   return {
     trend: /(increas|decreas|higher|lower|greater|fewer|less|rose|rise|fell|fall|drop|peak|more bubbles|levelled|plateau)/i.test(t),
@@ -1306,7 +1313,7 @@ function quickCheck(s){
     hyp: /(support|consistent with|agree)/i.test(t) && !/\bprove/i.test(t),
     bio: /(photosynth|light energy|chlorophyll|chloroplast|enzyme|carbon dioxide|co2|co₂|denatur|absorb|reactant|limiting)/i.test(t),
     eval: /(limitation|error|improv|more accurate|repeat|vary in size|bubble size|different sizes|volume|measuring cylinder|syringe|could have|should have|next time)/i.test(t),
-    concl: (s.co||'').trim().length > 20 && /(increas|decreas|higher|lower|highest|lowest|peak|affect|faster|slower|more|less)/i.test(s.co||''),
+    concl: co.trim().length > 20 && /(increas|decreas|higher|lower|highest|lowest|peak|affect|faster|slower|more|less)/i.test(co),
   };
 }
 function markKey(s){ return 'pl-mark-' + s.n + '|' + s.iv + '|' + (s.cc||'').length + '|' + (s.co||'').length; }
@@ -1314,15 +1321,16 @@ function markOf(s){
   let saved = null; try { saved = JSON.parse(localStorage.getItem(markKey(s)) || 'null'); } catch(e){}
   const c = saved && saved.c ? saved.c : quickCheck(s);
   const total = CRIT.filter(x => c[x.k]).length;
-  const feedback = saved && saved.fb ? saved.fb : autoFeedback(c, total);
+  const feedback = saved && saved.fb ? saved.fb : autoFeedback(c, total, cleanStarters(s.cc).removed + cleanStarters(s.co).removed);
   return { c, total, feedback, source: saved && saved.src ? saved.src : 'quick' };
 }
-function autoFeedback(c, total){
+function autoFeedback(c, total, removed){
   const tips = { trend:'describe the overall trend (what happened to the bubbles as your IV changed)', data:'quote numbers from your results table', hyp:'say whether your results support or do not support your hypothesis', bio:'explain the result using biology, such as light energy driving photosynthesis', eval:'name one limitation and one improvement', concl:'finish with a one or two sentence conclusion that answers the aim' };
   const miss = CRIT.filter(x => !c[x.k]).map(x => tips[x.k]);
-  if(total === 6) return 'Strong write-up: you described the trend with data, linked it to your hypothesis, explained the biology, evaluated the method and answered the aim. YAY';
-  if(total >= 4) return `Solid write-up. To improve, ${miss.join(' and ')}.`;
-  return `A good start. Next time, ${miss.slice(0,3).join(', ')}.`;
+  const note = removed ? ' Some of your sentence starters were not finished, so those sentences could not earn marks: complete them in your own words.' : '';
+  if(total === 6) return 'Strong write-up: you described the trend with data, linked it to your hypothesis, explained the biology, evaluated the method and answered the aim.' + note + ' YAY';
+  if(total >= 4) return `Solid write-up. To improve, ${miss.join(' and ')}.` + note;
+  return `A good start. Next time, ${miss.slice(0,3).join(', ')}.` + note;
 }
 function saveMark(s, data){ try { localStorage.setItem(markKey(s), JSON.stringify(data)); } catch(e){} }
 function conclusionsHTML(subs){
@@ -1333,6 +1341,7 @@ function conclusionsHTML(subs){
   h += subs.slice().sort((a,b)=>a.n.localeCompare(b.n, undefined, {numeric:true})).filter(s=>s.cc||s.co).map((s,i) => { const m = markOf(s); const id = 'cc' + i;
     return `<div class="concl" id="${id}" data-key="${esc(markKey(s))}"><div class="head"><b>${esc(s.n)}</b><button class="ghostbtn" data-print="${i}">Print report</button><span class="hint">${IVINFO[s.iv]?IVINFO[s.iv].short:''} · ${m.source==='claude'?'marked with Claude':m.source==='teacher'?'edited by you':'quick check'}</span><span class="score">${m.total} / 6</span></div>
       ${s.hy ? `<p class="hint"><b>Hypothesis:</b> ${esc(s.hy)}</p>` : ''}
+      ${(cleanStarters(s.cc).removed + cleanStarters(s.co).removed) ? `<p class="flagnote">${cleanStarters(s.cc).removed + cleanStarters(s.co).removed} unfinished sentence starter${cleanStarters(s.cc).removed + cleanStarters(s.co).removed>1?'s':''} left in (blanks or choices not completed). These sentences earn no marks.</p>` : ''}
       <p class="hint"><b>Discussion</b></p><blockquote>${esc(s.cc||'(none)')}</blockquote>
       <p class="hint"><b>Conclusion</b></p><blockquote>${esc(s.co||'(none)')}</blockquote>
       <div class="crit">${CRIT.map(x => `<button data-k="${x.k}" class="${m.c[x.k]?'met':'miss'}" aria-pressed="${m.c[x.k]}">${m.c[x.k]?'✓':'✗'} ${x.label}</button>`).join('')}</div>
@@ -1363,7 +1372,7 @@ Each write-up has a discussion and a short conclusion. Mark against six criteria
 - bio: gives a correct biological explanation (e.g. light energy drives photosynthesis; enzymes and optimum temperature/denaturing; carbon dioxide as a reactant; chlorophyll absorbs red and blue, reflects green)
 - eval: names a limitation, source of error or an improvement
 - concl: the conclusion answers the aim in one or two sentences (how the independent variable affected the rate of photosynthesis) and matches their results
-Check that claims match the student's own results. Write feedback of 1 to 3 short sentences to the student in Australian English: warm, plain and specific, naming what they did well and one thing to improve. Never compare them with other students. Use words like "solid" or "strong" for good work. If they meet 5 or 6 criteria, end the feedback with "YAY". No emoji.
+Students could insert sentence starters containing blanks (___) or choices such as "support / do not support". Any sentence that still contains an unfilled blank or an unmade choice is an unedited starter: give it no credit for any criterion, and mention in the feedback that starters must be completed in their own words. Check that claims match the student's own results. Write feedback of 1 to 3 short sentences to the student in Australian English: warm, plain and specific, naming what they did well and one thing to improve. Never compare them with other students. Use words like "solid" or "strong" for good work. If they meet 5 or 6 criteria, end the feedback with "YAY". No emoji.
 Return only a JSON array: [{"id":0,"trend":1,"data":0,"hyp":1,"bio":1,"eval":0,"concl":1,"feedback":"..."}], one object per student, in the same order.
 Students:
 ${JSON.stringify(items)}`;
